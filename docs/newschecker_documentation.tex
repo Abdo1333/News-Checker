@@ -192,92 +192,70 @@
 \begin{document}
 
 %% ════════════════════════════════════════════════════════════
-%%  PAGE DE TITRE
+%%  PAGE DE TITRE  (design simple et professionnel)
 %% ════════════════════════════════════════════════════════════
 \begin{titlepage}
-\newgeometry{margin=0pt}
-\begin{tikzpicture}[remember picture, overlay]
-  \fill[darkbg] (current page.south west) rectangle (current page.north east);
-  \fill[primary!25, opacity=0.2]
-    (current page.north west) -- ++(14,0) -- ++(0,-9) -- cycle;
-  \fill[accent!30, opacity=0.12]
-    (current page.south east) -- ++(-13,0) -- ++(0,8) -- cycle;
-  \foreach \x/\y/\r in {2/25/2.5, 19/4/3.5, 10/14/1.2}{
-    \fill[white, opacity=0.04] (\x,\y) circle (\r);
-  }
+\newgeometry{top=0pt,bottom=0pt,left=0pt,right=0pt}
+
+%% Filet coloré haut
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[primary] (current page.north west) rectangle ++(21cm,-0.9cm);
 \end{tikzpicture}
 
-\vspace*{3cm}
+\vspace*{3.5cm}
 \begin{center}
 
-% Logo
-\begin{tikzpicture}
-  \node[draw=primary, fill=darkbg, rounded corners=12pt,
-        inner sep=18pt, line width=2.5pt,
-        ] {
-    \begin{tikzpicture}[scale=1.2]
-      \draw[primary, line width=2.5pt, rounded corners=3pt]
-        (0,0) rectangle (1.2,1.5);
-      \foreach \y in {0.3,0.6,0.9,1.2}{
-        \draw[accent, line width=1.5pt] (0.15,\y) -- (1.05,\y);
-      }
-    \end{tikzpicture}
-  };
-\end{tikzpicture}
+%% ── Titre ────────────────────────────────────────────────────
+{\fontsize{48}{56}\bfseries\color{darkbg} NewsChecker}
 
-\vspace{0.8cm}
-{\fontsize{42}{50}\bfseries\color{white} NewsChecker}
-
-\vspace{0.2cm}
-{\Large\color{accent}\itshape DApp --- Vérification Décentralisée}
-
-\vspace{0.9cm}
-\begin{tikzpicture}
-  \node[fill=primary!35, rounded corners=5pt,
-        inner xsep=16pt, inner ysep=8pt]{
-    \color{white}\large\bfseries
-    Vérification des Nouvelles sur la Blockchain Tezos
-  };
-\end{tikzpicture}
-
-\vspace{1.5cm}
-{\color{white!60}\large\rule{9cm}{0.4pt}}
-
-\vspace{1cm}
-\begin{tabular}{ccc}
-  \begin{tikzpicture}
-    \node[draw=accent!60, fill=accent!12, rounded corners=5pt,
-          inner sep=8pt, text=white, align=center, minimum width=3.8cm]{
-      \textbf{Smart Contract}\\
-      {\small SmartPy / Tezos}
-    };
-  \end{tikzpicture}
-  &\quad&
-  \begin{tikzpicture}
-    \node[draw=success!60, fill=success!12, rounded corners=5pt,
-          inner sep=8pt, text=white, align=center, minimum width=3.8cm]{
-      \textbf{Frontend DApp}\\
-      {\small React 19 + Taquito}
-    };
-  \end{tikzpicture}
-\end{tabular}
-
-\vspace{2cm}
-{\color{white!70}\large
-  \textbf{Auteurs :} Maram \;\textbullet\; Abderrazzak \;\textbullet\; Ayoub \;\textbullet\; Asmaa}
+\vspace{0.4cm}
+{\Large\color{primary}\itshape
+  Application Décentralisée de Vérification des Informations}
 
 \vspace{0.5cm}
-{\color{white!60}
-  \textbf{Réseau :} Tezos Ghostnet (Testnet) \quad
-  \textbf{Version :} 1.0.0 \quad
-  \textbf{Date :} Mars 2026}
+\textcolor{primary!50}{\rule{11cm}{1.2pt}}
 
-\vspace{0.8cm}
-{\color{white!40}\small\itshape
-  Système de vérification d'informations basé sur la réputation et le consensus décentralisé\\
-  Résistant aux attaques Sybil --- Transparent --- Immuable}
+\vspace{0.5cm}
+{\normalsize\color{darkbg!60}
+  Contrat Intelligent \textbf{SmartPy} sur \textbf{Tezos Ghostnet}
+  \enspace$\cdot$\enspace
+  Interface \textbf{React\,19} + \textbf{Taquito\,24}}
+
+\vspace{3.5cm}
+
+%% ── Auteurs ──────────────────────────────────────────────────
+{\normalsize\color{darkbg!50}\scshape Réalisé par}
+
+\vspace{0.9cm}
+
+{\large\color{darkbg}
+\begin{tabular}{c}
+  Maram \textbf{Arfaoui}\\[0.7em]
+  Abderrazzak \textbf{El Bourkadi}\\[0.7em]
+  Ayoub \textbf{Et-Toubi}\\[0.7em]
+  Asmaa \textbf{Assaid}\\[0.7em]
+  Mohamed \textbf{Cheikh}\\
+\end{tabular}}
+
+\vspace{3.2cm}
+\textcolor{primary!50}{\rule{11cm}{0.6pt}}
+\vspace{0.6cm}
+
+%% ── Informations projet ──────────────────────────────────────
+{\small\color{darkbg!55}
+  \begin{tabular}{r@{\hspace{0.5em}:\hspace{0.7em}}l}
+    Réseau  & Tezos Ghostnet (Testnet) \\[0.25em]
+    Contrat & \texttt{KT1H49BAbxYfBReehN4dShGpm6jVWapXPgeq} \\[0.25em]
+    Version & 1.0.0\quad$\cdot$\quad Mars 2026 \\
+  \end{tabular}}
 
 \end{center}
+
+%% Filet coloré bas
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[primary] (current page.south west) rectangle ++(21cm,0.9cm);
+\end{tikzpicture}
+
 \restoregeometry
 \end{titlepage}
 
