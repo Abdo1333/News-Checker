@@ -310,11 +310,14 @@ NewsChecker propose une alternative décentralisée reposant sur les propriété
 \subsection{Contributions principales}
 
 \begin{itemize}
-  \item Conception d'un contrat intelligent \smartpy{} avec 7 points d'entrée (\emph{entrypoints})
+  \item Conception d'un contrat intelligent \smartpy{} avec 9 points d'entrée (\emph{entrypoints})
   \item Implémentation d'un système de réputation bi-état (Probatoire / Confirmé)
   \item Double mécanisme de finalisation pour gérer les cas de faible participation
+  \item Mécanisme \textbf{pull-over-push} : distribution des récompenses via \texttt{claim\_reward} (pas de boucles)
+  \item Dépôt anti-spam sur soumission : perdu si FAKE, rendu si RÉEL
+  \item Verrouillage du stake pendant les votes actifs (\texttt{active\_votes})
   \item Interface DApp \reactjs{} complète avec mode Démo intégré
-  \item Suite de tests automatisés (8 scénarios couvrant les cas nominaux et adversariaux)
+  \item Suite de tests automatisés (11 scénarios couvrant les cas nominaux et adversariaux)
 \end{itemize}
 
 %% ════════════════════════════════════════════════════════════
@@ -412,6 +415,7 @@ Le contrat \texttt{NewsChecker} est écrit en \smartpy{} et orchestre l'intégra
 \texttt{rep\_threshold} & 5                    & Seuil réputation pondérée \\
 \texttt{vote\_delay}    & 3\,600 s             & Délai min. avant finalisation (1h) \\
 \texttt{vote\_duration} & 86\,400 s            & Durée maximale du vote (24h) \\
+\texttt{news\_deposit}  & 500\,000 µtez        & Dépôt anti-spam par soumission (0,5 tez) \\
 \end{tabular}
 \end{infobox}
 
@@ -436,13 +440,15 @@ Le contrat \texttt{NewsChecker} est écrit en \smartpy{} et orchestre l'intégra
 \texttt{vote\_delay}    & \texttt{sp.int}                & Délai min (secondes) \\
 \rowcolor{lightgray}
 \texttt{vote\_duration} & \texttt{sp.int}                & Durée max (secondes) \\
+\texttt{news\_deposit}  & \texttt{sp.mutez}              & Dépôt anti-spam par soumission \\
+\rowcolor{lightgray}
 \texttt{next\_news\_id} & \texttt{sp.nat}                & Compteur auto-incrémenté \\
-\rowcolor{lightgray}
 \texttt{members}        & \texttt{big\_map[addr, Member]} & Membres inscrits \\
-\texttt{news}           & \texttt{big\_map[nat, News]}   & Articles soumis \\
 \rowcolor{lightgray}
-\texttt{votes}          & \texttt{big\_map[(nat,addr), bool]} & Votes individuels \\
-\texttt{voters}         & \texttt{big\_map[nat, list[addr]]}  & Votants par article \\
+\texttt{news}           & \texttt{big\_map[nat, News]}   & Articles soumis \\
+\texttt{votes}          & \texttt{big\_map[pair(nat,addr), bool]} & Votes (bigmap plat) \\
+\rowcolor{lightgray}
+\texttt{claimed}        & \texttt{big\_map[pair(nat,addr), bool]} & Récompenses réclamées \\
 \bottomrule
 \end{tabular}
 \caption{Structure du storage du contrat NewsChecker}
@@ -453,9 +459,10 @@ Le contrat \texttt{NewsChecker} est écrit en \smartpy{} et orchestre l'intégra
 \begin{lstlisting}[language=SmartPy, caption={Structure Member et NewsItem}]
 # Enregistrement d'un membre
 sp.record(
-    reputation = sp.nat,    # Points de reputation (debut: 1)
-    staked     = sp.mutez,  # Montant verrouille en Tez
-    active     = sp.bool    # Statut actif/inactif
+    reputation   = sp.nat,    # Points de reputation (debut: 1)
+    staked       = sp.mutez,  # Montant verrouille en Tez
+    active       = sp.bool,   # Statut actif/inactif
+    active_votes = sp.nat     # Nb. votes actifs (verrou stake)
 )
 
 # Enregistrement d'un article
@@ -463,16 +470,17 @@ sp.record(
     author      = sp.address,    # Soumetteur
     title       = sp.string,     # Titre
     url         = sp.string,     # URL source
-    status      = sp.nat,        # 1=Vote, 2=Reel, 3=Fake
+    status      = sp.nat,        # 1=Vote, 2=Reel, 3=Fake, 4=Annulee
     votes_real  = sp.nat,        # Somme ponderee REEL
     votes_fake  = sp.nat,        # Somme ponderee FAKE
     count_real  = sp.nat,        # Votes bruts REEL
     count_fake  = sp.nat,        # Votes bruts FAKE
-    submit_time = sp.timestamp   # Horodatage soumission
+    submit_time = sp.timestamp,  # Horodatage soumission
+    deposit     = sp.mutez       # Depot anti-spam de l'auteur
 )
 \end{lstlisting}
 
-\subsection{Les 7 points d'entrée}
+\subsection{Les 9 points d'entrée}
 
 \subsubsection{\entrypoint{register} — Inscription}
 
@@ -482,9 +490,10 @@ def register(self):
     assert not self.data.members.contains(sp.sender), "ALREADY_REGISTERED"
     assert sp.amount >= self.data.min_stake, "INSUFFICIENT_STAKE"
     self.data.members[sp.sender] = sp.record(
-        reputation = sp.nat(1),   # Mode probatoire (poids=0)
-        staked     = sp.amount,
-        active     = True
+        reputation   = sp.nat(1),   # Mode probatoire (poids=0)
+        staked       = sp.amount,
+        active       = True,
+        active_votes = sp.nat(0)    # Aucun vote actif au depart
     )
 \end{lstlisting}
 
@@ -548,8 +557,8 @@ def vote(self, news_id, opinion):
   {\status{success}{status = 2 (RÉEL)}};
 \node[box, fill=danger!30, draw=danger, below=of result] (fake)
   {\status{danger}{status = 3 (FAKE)}};
-\node[box, fill=primary!20, draw=primary, below=of fake] (rep)
-  {Mise à jour réputations};
+\node[box, fill=accent!20, draw=accent, below=of fake] (rep)
+  {claim\_reward() individuel};
 
 \draw[arr, primary] (start) -- (d1);
 \draw[arr, success] (d1)    -- node[above,font=\tiny]{Oui} (d2);
@@ -562,8 +571,8 @@ def vote(self, news_id, opinion):
 \draw[arr, success] (modeB) -| (result);
 \draw[arr, success] (result) -- node[above,font=\tiny]{Oui} (real);
 \draw[arr, danger]  (result) -- node[left, font=\tiny]{Non} (fake);
-\draw[arr, primary] (real) |- (rep);
-\draw[arr, primary] (fake) -- (rep);
+\draw[arr, accent] (real) |- (rep);
+\draw[arr, accent] (fake) -- (rep);
 
 \end{tikzpicture}
 \caption{Flowchart du processus de finalisation (deux modes)}
@@ -575,25 +584,123 @@ def vote(self, news_id, opinion):
 \begin{lstlisting}[language=SmartPy, caption={Gestion du stake et paramètres admin}]
 @sp.entrypoint
 def add_stake(self):
-    m = self.data.members[sp.sender]
-    self.data.members[sp.sender] = sp.record(
-        reputation=m.reputation,
-        staked=m.staked + sp.amount,  # Ajoute le montant envoye
-        active=m.active)
+    assert self.data.members.contains(sp.sender), "NOT_REGISTERED"
+    assert sp.amount > sp.mutez(0), "ZERO_AMOUNT"
+    self.data.members[sp.sender].staked += sp.amount  # Mise a jour directe
 
 @sp.entrypoint
 def withdraw_stake(self, amount):
     m = self.data.members[sp.sender]
-    remaining = m.staked - amount
-    assert remaining >= self.data.min_stake, "BELOW_MINIMUM"
+    assert m.active_votes == sp.nat(0), "ACTIVE_VOTES"  # Verrou vote
+    assert m.staked >= amount, "NOT_ENOUGH"             # Retrait total OK
+    self.data.members[sp.sender].staked -= amount
     sp.send(sp.sender, amount)  # Transfert on-chain
 
 @sp.entrypoint
-def update_params(self, new_min_stake, new_quorum, ...):
+def update_params(self, new_min_stake, new_quorum, new_rep_threshold,
+                  new_vote_delay, new_vote_duration, new_news_deposit):
     assert sp.sender == self.data.admin, "NOT_ADMIN"
     self.data.min_stake     = new_min_stake
     self.data.quorum        = new_quorum
-    # ... autres parametres
+    self.data.rep_threshold = new_rep_threshold
+    self.data.vote_delay    = new_vote_delay
+    self.data.vote_duration = new_vote_duration
+    self.data.news_deposit  = new_news_deposit  # Nouveau parametre
+\end{lstlisting}
+
+\subsubsection{\entrypoint{submit\_news} — Soumission avec dépôt anti-spam}
+
+\begin{lstlisting}[language=SmartPy, caption={Entrypoint submit\_news avec dépôt}]
+@sp.entrypoint
+def submit_news(self, title, url):
+    assert self.data.members.contains(sp.sender), "NOT_REGISTERED"
+    assert sp.amount >= self.data.news_deposit, "INSUFFICIENT_DEPOSIT"
+    nid = self.data.next_news_id
+    self.data.news[nid] = sp.record(
+        author=sp.sender, title=title, url=url,
+        status=sp.nat(1),  # EN_VOTE
+        ...,
+        deposit=sp.amount  # Sauvegarde du depot
+    )
+    self.data.next_news_id += sp.nat(1)
+\end{lstlisting}
+
+\begin{warnbox}[Mécanisme anti-spam du dépôt]
+Le dépôt est prélevé à la soumission et géré comme suit :
+\begin{itemize}
+  \item \textbf{Si RÉEL} : dépôt remboursé à l'auteur dans \texttt{finalize}
+  \item \textbf{Si FAKE} : dépôt conservé dans le contrat (pénalité)
+  \item \textbf{Si ANNULÉE} : dépôt remboursé via \texttt{cancel\_news} (0 votes, deadline passée)
+\end{itemize}
+\end{warnbox}
+
+\subsubsection{\entrypoint{finalize} — Clôture sans boucle (pull pattern)}
+
+\begin{lstlisting}[language=SmartPy, caption={Entrypoint finalize — pas de boucle de distribution}]
+@sp.entrypoint
+def finalize(self, news_id):
+    n = self.data.news[news_id]
+    assert n.status == sp.nat(1), "NOT_IN_VOTING"
+    # ... verifications quorum / delai / deadline
+    # Determination du resultat
+    final_status = sp.nat(3)  # FAKE par defaut
+    if n.votes_real > n.votes_fake:
+        final_status = sp.nat(2)  # REAL
+    self.data.news[news_id].status = final_status
+    # Depot rendu UNIQUEMENT si REAL (anti-spam)
+    if final_status == sp.nat(2):
+        sp.send(n.author, n.deposit)
+    # Pas de boucle sur les votants — pattern pull
+\end{lstlisting}
+
+\subsubsection{\entrypoint{claim\_reward} — Récompense individuelle (pull pattern)}
+
+\begin{lstlisting}[language=SmartPy, caption={Entrypoint claim\_reward — chaque votant réclame individuellement}]
+@sp.entrypoint
+def claim_reward(self, news_id):
+    n   = self.data.news[news_id]
+    assert n.status == sp.nat(2) or n.status == sp.nat(3), "NOT_FINALIZED"
+    key = sp.pair(news_id, sp.sender)
+    assert self.data.votes.contains(key),       "NOT_A_VOTER"
+    assert not self.data.claimed.contains(key), "ALREADY_CLAIMED"
+    self.data.claimed[key] = True
+    # Liberer le verrou de stake [P13]
+    self.data.members[sp.sender].active_votes -= sp.nat(1)
+    # Mise a jour reputation
+    voter_opinion = self.data.votes[key]
+    is_real = (n.status == sp.nat(2))
+    if voter_opinion == is_real:
+        self.data.members[sp.sender].reputation += sp.nat(2)  # Bon vote
+    else:
+        # Mauvais vote : -3, plancher = 1
+        if self.data.members[sp.sender].reputation > sp.nat(4):
+            self.data.members[sp.sender].reputation -= sp.nat(3)
+        else:
+            self.data.members[sp.sender].reputation = sp.nat(1)
+\end{lstlisting}
+
+\begin{infobox}[Avantages du pattern pull-over-push]
+Le pattern pull remplace la boucle de distribution présente dans la v1 :
+\begin{itemize}
+  \item \textbf{Pas de limite de gas} : chaque \texttt{claim\_reward} est une transaction indépendante
+  \item \textbf{Sécurité} : impossible de bloquer le contrat en ayant trop de votants
+  \item \textbf{Flexibilité} : chaque votant réclame quand il le souhaite
+\end{itemize}
+\end{infobox}
+
+\subsubsection{\entrypoint{cancel\_news} — Annulation par l'auteur}
+
+\begin{lstlisting}[language=SmartPy, caption={Entrypoint cancel\_news}]
+@sp.entrypoint
+def cancel_news(self, news_id):
+    n = self.data.news[news_id]
+    assert n.status == sp.nat(1),        "NOT_IN_VOTING"
+    assert sp.sender == n.author,        "NOT_AUTHOR"
+    assert n.count_real + n.count_fake == sp.nat(0), "HAS_VOTES"
+    deadline = sp.add_seconds(n.submit_time, self.data.vote_duration)
+    assert sp.now >= deadline,           "DEADLINE_NOT_PASSED"
+    self.data.news[news_id].status = sp.nat(4)  # ANNULEE
+    sp.send(n.author, n.deposit)  # Depot rendu (news ignoree, pas du spam)
 \end{lstlisting}
 
 \subsection{Système de réputation}
@@ -891,43 +998,55 @@ Les trois articles démo illustrent les statuts possibles :
 \midrule
 \endhead
 
-\texttt{test\_finalize\_after\_delay}
-  & Mode A (quorum + délai)
-  & Finalise après 3700s avec quorum=3 $\checkmark$ \\
+\texttt{test\_register}
+  & Inscription
+  & Membre créé avec rep=1, active\_votes=0 $\checkmark$ \\
 \rowcolor{lightgray}
-\texttt{test\_finalize\_after\_deadline}
-  & Mode B (timeout)
-  & Finalise après 90000s même sans quorum $\checkmark$ \\
+\texttt{test\_staking}
+  & Stake add/withdraw
+  & Retrait total autorisé, solde vérifié $\checkmark$ \\
 
-\texttt{test\_vote\_after\_deadline\_blocked}
-  & Deadline vote
-  & Vote refusé après 86400s $\checkmark$ \\
+\texttt{test\_stake\_locked\_during\_vote}
+  & Verrou stake [P13]
+  & \texttt{ACTIVE\_VOTES} pendant vote actif $\checkmark$ \\
 \rowcolor{lightgray}
-\texttt{test\_no\_votes\_cannot\_finalize}
-  & Aucun vote
-  & \texttt{NO\_VOTES} même après deadline $\checkmark$ \\
+\texttt{test\_submit\_news\_deposit}
+  & Dépôt anti-spam [P7]
+  & \texttt{INSUFFICIENT\_DEPOSIT} si manquant $\checkmark$ \\
 
-\texttt{test\_reputation\_growth}
-  & Progression rep.
-  & rep $1 \to 3 \to 5 \to 7$ en 3 tours $\checkmark$ \\
+\texttt{test\_vote}
+  & Vote pondéré
+  & Poids=0 en probatoire, VOTING\_ENDED après deadline $\checkmark$ \\
 \rowcolor{lightgray}
+\texttt{test\_finalize}
+  & Mode A + Mode B
+  & Finalise par quorum+délai ou deadline $\checkmark$ \\
+
+\texttt{test\_deposit\_anti\_spam}
+  & Anti-spam réel
+  & Dépôt perdu si FAKE, rendu si RÉEL $\checkmark$ \\
+\rowcolor{lightgray}
+\texttt{test\_claim\_reward}
+  & Pull pattern [P8-10]
+  & rep+2 (bon vote), rep plancher=1 (mauvais) $\checkmark$ \\
+
+\texttt{test\_cancel\_news}
+  & Annulation auteur
+  & Status=4, dépôt rendu si 0 votes + deadline $\checkmark$ \\
+\rowcolor{lightgray}
+\texttt{test\_reputation\_full\_lifecycle}
+  & Cycle complet rep.
+  & rep $1\!\to\!3\!\to\!5\!\to\!7$ sur 3 tours, votes pondérés $\checkmark$ \\
+
 \texttt{test\_sybil\_attack}
-  & Anti-Sybil
-  & 5 attaquants (poids=0) vs 2 confirmés $\to$ FAKE $\checkmark$ \\
-
-\texttt{test\_bad\_voter\_falls}
-  & Pénalité rep.
-  & rep $5 \to 2$ après vote incorrect $\checkmark$ \\
+  & Résistance Sybil
+  & 3 Sybil (poids=0) vs 2 confirmés (rep=5) $\to$ FAKE $\checkmark$ \\
 \rowcolor{lightgray}
-\texttt{test\_double\_vote}
-  & Vote double
-  & \texttt{ALREADY\_VOTED} bloqué $\checkmark$ \\
-
-\texttt{test\_admin\_and\_staking}
-  & Admin + staking
-  & Params mis à jour, non-admin bloqué $\checkmark$ \\
+\texttt{test\_admin}
+  & Admin params
+  & 6 paramètres mis à jour, non-admin bloqué $\checkmark$ \\
 \bottomrule
-\caption{Suite complète des 9 tests SmartPy}
+\caption{Suite complète des 11 tests SmartPy}
 \end{longtable}
 
 \subsection{Codes d'erreur}
@@ -940,27 +1059,42 @@ Les trois articles démo illustrent les statuts possibles :
 \rowcolor{primary!15}
 \textbf{Condition} & \textbf{Code d'erreur} & \textbf{Entrypoint} \\
 \midrule
-Déjà inscrit              & \texttt{ALREADY\_REGISTERED}  & \texttt{register} \\
+Déjà inscrit               & \texttt{ALREADY\_REGISTERED}   & \texttt{register} \\
 \rowcolor{lightgray}
 Mise insuffisante          & \texttt{INSUFFICIENT\_STAKE}   & \texttt{register} \\
 Non inscrit                & \texttt{NOT\_REGISTERED}       & Tous \\
 \rowcolor{lightgray}
-News inexistante           & \texttt{NEWS\_NOT\_FOUND}      & \texttt{vote}, \texttt{finalize} \\
-Statut incorrect           & \texttt{NOT\_IN\_VOTING}       & \texttt{vote}, \texttt{finalize} \\
+Dépôt insuffisant          & \texttt{INSUFFICIENT\_DEPOSIT} & \texttt{submit\_news} \\
+Titre vide                 & \texttt{EMPTY\_TITLE}          & \texttt{submit\_news} \\
 \rowcolor{lightgray}
+URL vide                   & \texttt{EMPTY\_URL}            & \texttt{submit\_news} \\
+News inexistante           & \texttt{NEWS\_NOT\_FOUND}      & \texttt{vote}, \texttt{finalize}, \texttt{claim\_reward} \\
+\rowcolor{lightgray}
+Statut incorrect           & \texttt{NOT\_IN\_VOTING}       & \texttt{vote}, \texttt{finalize}, \texttt{cancel\_news} \\
 Deadline dépassée          & \texttt{VOTING\_ENDED}         & \texttt{vote} \\
+\rowcolor{lightgray}
+Stake trop bas             & \texttt{STAKE\_TOO\_LOW}       & \texttt{vote} \\
 Déjà voté                  & \texttt{ALREADY\_VOTED}        & \texttt{vote} \\
 \rowcolor{lightgray}
 Finalisation impossible    & \texttt{CANNOT\_FINALIZE\_YET} & \texttt{finalize} \\
 Aucun vote                 & \texttt{NO\_VOTES}             & \texttt{finalize} \\
 \rowcolor{lightgray}
+Non finalisée              & \texttt{NOT\_FINALIZED}        & \texttt{claim\_reward} \\
+Pas votant                 & \texttt{NOT\_A\_VOTER}         & \texttt{claim\_reward} \\
+\rowcolor{lightgray}
+Déjà réclamé               & \texttt{ALREADY\_CLAIMED}      & \texttt{claim\_reward} \\
 Solde insuffisant          & \texttt{NOT\_ENOUGH}           & \texttt{withdraw\_stake} \\
-Sous le minimum            & \texttt{BELOW\_MINIMUM}        & \texttt{withdraw\_stake} \\
+\rowcolor{lightgray}
+Votes actifs présents      & \texttt{ACTIVE\_VOTES}         & \texttt{withdraw\_stake} \\
+Pas l'auteur               & \texttt{NOT\_AUTHOR}           & \texttt{cancel\_news} \\
+\rowcolor{lightgray}
+Votes déjà reçus           & \texttt{HAS\_VOTES}            & \texttt{cancel\_news} \\
+Deadline pas passée        & \texttt{DEADLINE\_NOT\_PASSED} & \texttt{cancel\_news} \\
 \rowcolor{lightgray}
 Non administrateur         & \texttt{NOT\_ADMIN}            & \texttt{update\_params} \\
 \bottomrule
 \end{tabular}
-\caption{Codes d'erreur du contrat (12 conditions)}
+\caption{Codes d'erreur du contrat (22 conditions)}
 \end{table}
 
 %% ════════════════════════════════════════════════════════════
@@ -985,7 +1119,11 @@ Non administrateur         & \texttt{NOT\_ADMIN}            & \texttt{update\_pa
 \textbf{Manipulation admin}    & Admin limité à update\_params uniquement  & Bonne \\
 \textbf{Vote sans enjeu}       & Staking minimum obligatoire               & Élevée \\
 \rowcolor{lightgray}
-\textbf{Double vote}           & Clé \texttt{(news\_id, address)} unique   & Totale \\
+\textbf{Double vote}           & Clé \texttt{pair(news\_id, address)} unique (bigmap plat) & Totale \\
+\textbf{Spam soumissions}      & Dépôt anti-spam perdu si FAKE             & Élevée \\
+\rowcolor{lightgray}
+\textbf{Retrait stake pendant vote} & Compteur \texttt{active\_votes} verrouille le stake & Totale \\
+\textbf{Boucle gas exhaustion} & Pattern pull : \texttt{claim\_reward} individuel, pas de boucle & Totale \\
 \bottomrule
 \end{tabular}
 \caption{Analyse des vecteurs d'attaque et contre-mesures}
@@ -1091,11 +1229,14 @@ NewsChecker démontre la faisabilité d'un système de vérification des nouvell
 
 \begin{successbox}[Résultats obtenus]
 \begin{itemize}
-  \item \textbf{Contrat fonctionnel :} 7 entrypoints, 12 codes d'erreur, 9 tests automatisés validés
+  \item \textbf{Contrat fonctionnel :} 9 entrypoints, 22 codes d'erreur, 11 tests automatisés validés
   \item \textbf{Résistance Sybil prouvée :} Le vote pondéré par réputation neutralise les comptes fantômes
   \item \textbf{Double mode de finalisation :} Garantit la résolution même en cas de faible participation
+  \item \textbf{Pattern pull-over-push :} Suppression des boucles, \texttt{claim\_reward} individuel, sécurité gas garantie
+  \item \textbf{Anti-spam économique :} Le dépôt de soumission pénalise les fausses informations
+  \item \textbf{Verrouillage de stake :} \texttt{active\_votes} empêche tout retrait pendant un vote actif
   \item \textbf{Interface complète :} Mode Démo intégré pour tester sans déploiement réel
-  \item \textbf{Gouvernance paramétrable :} L'admin peut ajuster le comportement sans redéploiement
+  \item \textbf{Gouvernance paramétrable :} L'admin peut ajuster 6 paramètres sans redéploiement
 \end{itemize}
 \end{successbox}
 
